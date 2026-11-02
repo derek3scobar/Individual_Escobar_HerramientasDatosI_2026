@@ -23,6 +23,9 @@ execute:
   echo: false
   warning: false
   message: false
+knitr:
+  opts_knit:
+    root.dir: ".."
 ---
 
 ```{r setup, include=FALSE}
@@ -30,9 +33,8 @@ library(tidyverse)
 library(knitr)
 library(kableExtra)
 
-# Cargar base procesada y funciones analiticas desde rutas relativas
-datos <- readRDS("../data/datos_consolidados.rds")
-source("02_modelo_y_simulacion.R")
+# Cargar librerías del proyecto, base y funciones desde la raíz
+source("cod/02_modelo_y_simulacion.R")
 ```
 
 # Objetivo
