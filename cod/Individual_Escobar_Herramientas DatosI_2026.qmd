@@ -1,0 +1,244 @@
+---
+title: "Evaluación del Impacto Económico de Terremotos Históricos (1960–Actualidad)"
+subtitle: "Proyecto Individual C5E850"
+author: "Derek Matías Escobar Jaramillo"
+date: today
+format:
+  pdf:
+    documentclass: article
+    papersize: letter
+    fontsize: 12pt
+    geometry:
+      - top=15mm
+      - bottom=15mm
+      - left=15mm
+      - right=15mm
+    colorlinks: true
+    linkcolor: teal
+    urlcolor: teal
+    toc: false
+    number-sections: true
+    linestretch: 1.15
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+
+# Cargar base procesada y funciones analiticas desde rutas relativas
+datos <- readRDS("../data/datos_consolidados.rds")
+source("02_modelo_y_simulacion.R")
+```
+
+# Objetivo
+
+Desarrollar un modelo econométrico predictivo en R a partir de registros geofísicos e históricos (1960–presente) para estimar y simular el impacto económico de futuros terremotos, tanto en porcentaje del PIB como en dinero a valor presente.
+
+# Introducción
+
+Analizar el costo económico que causan los terremotos a lo largo de la historia presenta dos dificultades principales cuando se quieren comparar eventos de distintas épocas y lugares:
+
+1. **La inflación con el paso de los años:** Perder 500 millones de dólares en 1970 no es lo mismo que perder esa misma cantidad hoy, ya que el poder de compra del dinero ha cambiado notablemente.
+2. **El tamaño de cada economía:** Una pérdida de 1,000 millones de dólares puede representar una fracción pequeña de la economía para una nación grande como Estados Unidos o Japón, pero significar una catástrofe financiera para un país en desarrollo con un Producto Interno Bruto (PIB) mucho más pequeño.
+
+Para resolver estas dos dificultades, en este trabajo se construyó un proceso de datos en R que cruza la información de los terremotos de la NOAA con los registros de PIB e inflación del Banco Mundial. Con esto, se logró llevar todas las pérdidas a dólares de valor presente y calcular el porcentaje del PIB que representó cada desastre. Luego, se ajustó un modelo de regresión para estimar el daño a partir de las características físicas del sismo (magnitud, profundidad y si hubo tsunami), programando funciones que permiten proyectar escenarios futuros y compararlos con sismos parecidos de la historia.
+
+# Datos (Insumos)
+
+Para este análisis se utilizaron tres bases de datos públicas desde 1960 hasta la actualidad:
+
+1. **Catálogo de Terremotos (NOAA):** Contiene la información física del sismo (año, coordenadas, profundidad focal en kilómetros, magnitud y si provocó tsunami), junto con el reporte de daños materiales estimados en millones de dólares corrientes.
+2. **PIB Nominal Mundial (Banco Mundial):** Registra el valor anual de la economía de cada país en dólares. Se usa para saber qué tan grande era la economía en el momento exacto en que ocurrió el terremoto.
+3. **Índice de Precios al Consumidor de Estados Unidos (Banco Mundial):** Registra la inflación histórica en dólares. Se usa para ajustar las pérdidas de épocas pasadas y medirlas todas con el valor actual del dinero.
+
+| Fuente | Entidad Emisora | Período | Variables Principales Utilizadas |
+|:---|:---|:---:|:---|
+| **Terremotos** | NOAA / NCEI | 1960–Actualidad | Magnitud, Profundidad (km), Tsunami, Daños monetarios |
+| **PIB Nominal** | Banco Mundial | 1960–Actualidad | País, Código ISO-3, Año, PIB en USD |
+| **IPC EE. UU.** | Banco Mundial | 1960–Actualidad | Año, Nivel del índice de precios |
+
+# Metodología
+
+El procedimiento se estructuró en cuatro etapas:
+
+1. **Estandarización y cruce de datos:** Se extrajo el país de cada sismo y se le asignó su código internacional ISO-3. Con ese código y el año, se unió cada terremoto con el PIB de su país y la inflación en dólares de esa fecha.
+2. **Normalización económica y ajuste monetario:** 
+   * **Porcentaje del PIB:** Se dividió el daño reportado entre el PIB del país en ese año y se multiplicó por 100. Así se mide el impacto real relativo al tamaño de cada economía y se neutraliza el sesgo de riqueza acumulada.
+   * **Valor presente:** Cada pérdida en millones de dólares se multiplicó por $(IPC_{\text{actual}} / IPC_{\text{año del sismo}})$, actualizando el poder adquisitivo del dinero a precios actuales.
+3. **Calibración del modelo estadístico:** Como la energía sísmica y los daños crecen exponencialmente con la magnitud, se aplicó logaritmo natural al porcentaje de daño para ajustar la regresión lineal garantizando estimaciones estrictamente no negativas:
+   $$\ln(\text{porc\_dano\_pib}) = \beta_0 + \beta_1(\text{magnitud}) + \beta_2(\text{profundidad\_km}) + \beta_3(\text{si\_tsunami}) + \varepsilon$$
+4. **Construcción de funciones:** Se programaron dos funciones modulares:
+   * `estimar_dano_sismo`: Proyecta el daño esperado, permitiendo elegir entre un intervalo de confianza (para el promedio general) o de predicción (para un sismo individual). Si se incluye el PIB, calcula también el monto en millones de dólares.
+   * `buscar_sismos_analogos`: Extrae los eventos del registro histórico que tuvieron características físicas similares para contrastar las estimaciones contra datos reales.
+
+# Resultados
+
+## Análisis Exploratorio de Datos (AED)
+
+Tras completar el proceso de depuración, la base consolidada cuenta con 461 terremotos históricos analizados. En la siguiente tabla se resumen las características principales de estos eventos:
+
+```{r tabla-aed}
+resumen_aed <- tibble(
+  Variable = c("Magnitud", "Profundidad (km)", "Daño (% del PIB)", "Daño a Valor Presente (Mill. USD)"),
+  Mínimo = c(
+    round(min(datos$magnitud), 2),
+    round(min(datos$profundidad_km), 1),
+    round(min(datos$porc_dano_pib), 4),
+    round(min(datos$dano_mill_usd_vp), 2)
+  ),
+  Mediana = c(
+    round(median(datos$magnitud), 2),
+    round(median(datos$profundidad_km), 1),
+    round(median(datos$porc_dano_pib), 4),
+    round(median(datos$dano_mill_usd_vp), 2)
+  ),
+  Media = c(
+    round(mean(datos$magnitud), 2),
+    round(mean(datos$profundidad_km), 1),
+    round(mean(datos$porc_dano_pib), 4),
+    round(mean(datos$dano_mill_usd_vp), 2)
+  ),
+  Máximo = c(
+    round(max(datos$magnitud), 2),
+    round(max(datos$profundidad_km), 1),
+    round(max(datos$porc_dano_pib), 4),
+    round(max(datos$dano_mill_usd_vp), 2)
+  )
+)
+
+kable(resumen_aed, caption = "Resumen estadístico de las variables principales (461 sismos)", booktabs = TRUE) |> 
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = TRUE, font_size = 10)
+```
+
+```{r grafico-aed, fig.height=2.8, fig.width=7.2, fig.align='center'}
+ggplot(datos, aes(x = magnitud, y = porc_dano_pib)) +
+  geom_point(aes(color = as.factor(si_tsunami)), alpha = 0.55, size = 1.8) +
+  geom_smooth(method = "lm", color = "black", linewidth = 0.8, se = TRUE) +
+  scale_y_log10(
+    breaks = c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100),
+    labels = c("0.0001%", "0.001%", "0.01%", "0.1%", "1%", "10%", "100%")
+  ) +
+  scale_color_manual(values = c("0" = "#4A90E2", "1" = "#D0021B"), labels = c("No", "Sí")) +
+  labs(
+    title = "Tendencia del Daño Económico (% del PIB) según Magnitud",
+    x = "Magnitud (Richter)",
+    y = "Daño (% del PIB)",
+    color = "¿Hubo Tsunami?"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+El gráfico ilustra una clara tendencia ascendente entre la magnitud del evento y el nivel de afectación económica: la recta de ajuste confirma que cada incremento en la escala Richter eleva de forma constante el porcentaje de daño esperado sobre el PIB. Asimismo, la dispersión alrededor de la línea refleja la influencia de factores locales no físicos (como la densidad poblacional y la cercanía urbana), mientras que los puntos asociados a tsunamis se concentran prominentemente en la parte superior del impacto.
+
+Dentro de esta distribución destaca de forma crítica el caso de Nicaragua (como el terremoto de Managua de 1972), el cual constituye el valor atípico más extremo de la muestra al registrar pérdidas que superaron el 300% de su PIB anual. Este caso evidencia cómo en economías de escala reducida y con alta concentración de infraestructura en una sola urbe, un evento sísmico moderado o alto puede sobrepasar varias veces la capacidad económica total del país, marcando el techo histórico de severidad en la base analizada.
+
+```{r tabla-nicaragua}
+tabla_nicaragua <- datos |> 
+  filter(codigo_pais == "NIC", porc_dano_pib > 100) |> 
+  mutate(
+    porc_dano_pib    = round(porc_dano_pib, 2),
+    dano_mill_usd_vp = round(dano_mill_usd_vp, 2),
+    pib_mill_usd     = round(pib_mill_usd, 2)
+  ) |> 
+  select(
+    Año            = anio,
+    País           = pais,
+    Mag.           = magnitud,
+    `Prof. (km)`   = profundidad_km,
+    `PIB (M$)`     = pib_mill_usd,
+    `Daño (% PIB)` = porc_dano_pib,
+    `Daño VP (M$)` = dano_mill_usd_vp
+  )
+
+kable(tabla_nicaragua, caption = "Caso extremo atípico: Terremoto con mayor impacto relativo en Nicaragua", booktabs = TRUE) |> 
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = TRUE, font_size = 10)
+```
+
+## Resultados de la Metodología
+
+El modelo de regresión lineal ajustado arrojó los siguientes coeficientes:
+
+```{r ajuste-modelo}
+coef_modelo <- summary(modelo_dano)$coefficients
+tabla_reg <- tibble(
+  Variable = c("Constante (Intercepto)", "Magnitud", "Profundidad (km)", "Tsunami (1 = Sí)"),
+  Estimación = round(coef_modelo[, 1], 4),
+  `Error Est.` = round(coef_modelo[, 2], 4),
+  `Valor t` = round(coef_modelo[, 3], 2),
+  `Valor p` = format.pval(coef_modelo[, 4], eps = 0.001, digits = 3)
+)
+
+kable(tabla_reg, caption = "Resultados del modelo de regresión log-lineal", booktabs = TRUE) |> 
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = TRUE, font_size = 10)
+```
+
+**Interpretación de los coeficientes:**
+
+- **Magnitud ($\beta_1 = 1.0546$, $p < 0.001$):** Es la variable determinante con máxima significancia estadística. Por cada aumento de una unidad en la escala de magnitud, el impacto porcentual esperado sobre el PIB se multiplica por $e^{1.0546} \approx 2.87$ (un incremento relativo del 187%).
+- **Profundidad ($\beta_2 = -0.0071$, $p = 0.205$):** Presenta signo negativo; a mayor profundidad focal, mayor disipación de energía antes de alcanzar la superficie, amortiguando levemente las pérdidas.
+- **Tsunami ($\beta_3 = 0.6275$, $p = 0.087$):** La presencia de un tsunami asociado multiplica el daño económico relativo por $e^{0.6275} \approx 1.87$ (un 87% adicional de impacto).
+- **Bondad de ajuste ($R^2 = 0.1412$):** El modelo explica el 14.12% de la variabilidad del daño relativo. Este porcentaje es habitual en modelos catastróficos basados exclusivamente en parámetros geofísicos, ya que el impacto final depende de la ubicación del epicentro respecto a centros poblados.
+
+A continuación se prueba el modelo con un escenario sísmico severo: **magnitud 7.0, profundidad de 10 km, con tsunami y una economía con un PIB de 3,770 millones de dólares**:
+
+```{r tabla-pruebas}
+prueba_conf <- estimar_dano_sismo(7.0, 10, 1, 3770, "C")
+prueba_pred <- estimar_dano_sismo(7.0, 10, 1, 3770, "P")
+
+comparacion_escenarios <- bind_rows(prueba_conf, prueba_pred) |> 
+  select(
+    Intervalo = tipo_intervalo,
+    `Estimado (% PIB)` = porc_pib_estimado,
+    `Límite Inf (% PIB)` = porc_pib_ic_inf,
+    `Límite Sup (% PIB)` = porc_pib_ic_sup,
+    `Daño Estimado (M$)` = dano_estimado_mill_usd,
+    `Daño Lím. Sup (M$)` = dano_sup_mill_usd
+  )
+
+kable(comparacion_escenarios, caption = "Simulación de escenarios para magnitud 7.0 (PIB: 3,770 M$)", booktabs = TRUE) |> 
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = TRUE, font_size = 10)
+```
+
+Al consultar la función de sismos históricos análogos alrededor de este valor estimado, se identifican eventos similares en el registro:
+
+```{r tabla-analogos}
+analogos_ejemplo <- buscar_sismos_analogos(mag_ref = 7.0, tol_mag = 0.1, prof_max = 15, porc_referencia = 0.085) |> 
+  head(4) |> 
+  mutate(
+    porc_dano_pib    = round(porc_dano_pib, 4),
+    dano_mill_usd_vp = round(dano_mill_usd_vp, 2)
+  ) |> 
+  select(
+    Año = anio,
+    País = pais,
+    Mag. = magnitud,
+    `Prof. (km)` = profundidad_km,
+    `Tsunami` = si_tsunami,
+    `Daño (% PIB)` = porc_dano_pib,
+    `Daño VP (M$)` = dano_mill_usd_vp
+  )
+
+kable(analogos_ejemplo, caption = "Sismos históricos con características similares (Análogos)", booktabs = TRUE) |> 
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = TRUE, font_size = 10)
+```
+
+# Conclusiones
+
+1. **Desarrollo de herramientas analíticas:** Se logró integrar con éxito el registro histórico de terremotos con series de PIB e inflación para calibrar un modelo econométrico reproducible, programando funciones en R capaces de simular escenarios de pérdida relativa (% del PIB) y estimar montos monetarios en millones de dólares.
+2. **Limitaciones por variables ausentes:** Aunque la magnitud física y el tsunami son determinantes estadísticos, el modelo omite factores decisivos en el impacto final como la densidad poblacional del epicentro, la cercanía a infraestructura crítica y la rigurosidad del código de construcción sismorresistente local.
+3. **Alta variabilidad e incertidumbre:** La simulación de daños directos enfrenta una dispersión residual significativa; como se comprobó en la tabla de sismos análogos, eventos con parámetros físicos casi idénticos (magnitud ~7.0 y profundidad ~10 km) generaron pérdidas reales con diferencias de gran escala, variando desde los 78 hasta más de 617 millones de dólares.
+
+# Referencias
+
+* Banco Mundial. (2024). PIB a precios actuales en USD [Conjunto de datos: NY.GDP.MKTP.CD]. Indicadores del Desarrollo Mundial. [https://datos.bancomundial.org/indicador/NY.GDP.MKTP.CD](https://datos.bancomundial.org/indicador/NY.GDP.MKTP.CD)
+* Banco Mundial. (2024). Indice de precios al consumidor (2010 = 100) - Estados Unidos [Conjunto de datos: FP.CPI.TOTL]. Indicadores del Desarrollo Mundial. [https://datos.bancomundial.org/indicador/FP.CPI.TOTL?locations=US](https://datos.bancomundial.org/indicador/FP.CPI.TOTL?locations=US)
+* National Geophysical Data Center / World Data Service (NGDC/WDS): NCEI/WDS Global Significant Earthquake Database. NOAA National Centers for Environmental Information. [https://doi.org/10.7289/V5TD9V7K](https://doi.org/10.7289/V5TD9V7K)
